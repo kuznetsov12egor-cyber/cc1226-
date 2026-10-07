@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Endless White Grid</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        #hint {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.45);
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            letter-spacing: 0.4px;
+            pointer-events: none;
+            user-select: none;
+            transition: opacity 0.2s ease;
+        }
+
+        #phonePanel {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            background: #000;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            padding: 28px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        #phonePanel h1 { font-size: 22px; margin: 18px 0 10px; }
+        #phonePanel p { color: rgba(255,255,255,.65); line-height: 1.45; }
+        #phoneStatus { margin: 20px 0; min-height: 24px; color: rgba(255,255,255,.75); }
+        .phoneButton {
+            display: block;
+            width: min(360px, 100%);
+            margin: 12px auto;
+            padding: 16px 18px;
+            border: 1px solid rgba(255,255,255,.35);
+            border-radius: 12px;
+            background: #111;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .phoneButton:active { background: #222; }
+        #phoneDebug { margin-top: 24px; font: 12px monospace; color: rgba(255,255,255,.35); }
+        #desktopPhoneStatus {
+            position: fixed;
+            right: 16px;
+            top: 16px;
+            z-index: 20;
+            padding: 7px 10px;
+            border: 1px solid rgba(255,255,255,.15);
+            border-radius: 8px;
+            background: rgba(0,0,0,.55);
+            color: rgba(255,255,255,.5);
+            font: 12px Arial, sans-serif;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+<div id="hint">Кликни по экрану</div>
+<div id="desktopPhoneStatus">Телефон: не подключён</div>
+<div id="phonePanel">
+    <h1>Управление головой</h1>
+    <p>Эта страница превращает телефон в гироскопический контроллер камеры на компьютере.</p>
+    <button id="enableSensors" class="phoneButton">Подключить датчики</button>
+    <button id="calibratePhone" class="phoneButton" disabled>Калибровать</button>
+    <div id="phoneStatus">Ожидание подключения…</div>
+    <div id="phoneDebug">alpha — · beta — · gamma —</div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.178/build/three.module.js";
+
+// ============================================================
+// PHONE / DESKTOP MODE
+// ============================================================
+const urlParams = new URLSearchParams(location.search);
+const phoneMode = urlParams.get("mode") === "phone";
+const phonePanel = document.getElementById("phonePanel");
+const desktopPhoneStatus = document.getElementById("desktopPhoneStatus");
+if (phoneMode) {
+    phonePanel.style.display = "block";
+    document.getElementById("hint").style.display = "none";
+    desktopPhoneStatus.style.display = "none";
+}
+
+// ============================================================
+// SCENE & CAMERA
+// ============================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(
+    72,
+    window.innerWidth / window.innerHeight,
+    0.05,
+    2000
+);
+
+camera.position.set(0, 2, 0);
+camera.rotation.order = "YXZ";
+
+// ============================================================
+// RENDERER
+// ============================================================
+const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    powerPreference: "high-performance"
+});
+
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+// ============================================================
+// PROCEDURAL CANVAS TEXTURE
+// ============================================================
+const textCanvas = document.createElement('canvas');
+const ctx = textCanvas.getContext('2d');
+
+const text = "CRYSTAL CASTLES";
+
+ctx.font = "italic bold 220px Arial, sans-serif";
+const metrics = ctx.measureText(text);
+const textWidth = Math.ceil(metrics.width);
+
+const horizontalGap = 180;
+textCanvas.width = textWidth + horizontalGap; 
+textCanvas.height = 140; 
+
+ctx.fillStyle = "#000000";
+ctx.fillRect(0, 0, textCanvas.width, textCanvas.height);
+
+ctx.translate(textCanvas.width, 0);
+const scaleY = 0.45;
+ctx.scale(-1, scaleY); 
+ctx.transform(1, 0, -0.25, 1, 0, 0);
+
+ctx.textAlign = "center";
+ctx.textBaseline = "middle";
+ctx.font = "italic bold 220px Arial, sans-serif"; 
+
+const cx = textCanvas.width / 2;
+const cy = (textCanvas.height / 2) / scaleY;
+const stepX = textCanvas.width;
+const stepY = textCanvas.height / scaleY;
+
+for (let x = -2; x <= 2; x++) {
+    for (let y = -2; y <= 2; y++) {
+        const drawX = cx + x * stepX;
+        const drawY = cy + y * stepY;
+
+        const shiftX = 220; 
+        const gapY = 60; 
+
+        ctx.fillStyle = "rgba(150, 180, 255, 0.4)";
+        ctx.fillText(text, drawX - 8, drawY - gapY);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.fillText(text, drawX, drawY - gapY);
+
+        ctx.fillStyle = "rgba(150, 180, 255, 0.4)";
+        ctx.fillText(text, drawX - shiftX - 8, drawY + gapY);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.fillText(text, drawX - shiftX, drawY + gapY);
+    }
+}
+
+const logoTexture = new THREE.CanvasTexture(textCanvas);
+logoTexture.colorSpace = THREE.SRGBColorSpace;
+logoTexture.wrapS = THREE.RepeatWrapping;
+logoTexture.wrapT = THREE.RepeatWrapping;
+logoTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+logoTexture.minFilter = THREE.LinearMipmapLinearFilter;
+
+// ============================================================
+// TREADMILL ROOM (STRICTLY VERTICAL SHADER, NO DISTANCE FADE)
+// ============================================================
+const ROOM_SIZE = 350;
+const ROOM_HEIGHT = 100;
+const roomGeo = new THREE.BoxGeometry(ROOM_SIZE, ROOM_HEIGHT, ROOM_SIZE);
+
+const wallsMat = new THREE.ShaderMaterial({
+    uniforms: {
+        uTexture: { value: logoTexture },
+        uRepeat: { value: new THREE.Vector2(5, 5) },
+        uOffset: { value: new THREE.Vector2(0, 0) },
+        uTime: { value: 0 },
+        uWiggle: { value: 0 },
+        uMotionSpeed: { value: 0 },
+        uPlayerPosition: { value: new THREE.Vector3(0, 0, 0) }
+    },
+
+    vertexShader: `
+        varying vec2 vUv;
+        varying vec3 vWorldPosition;
+
+        void main() {
+            vUv = uv;
+            vec4 worldPos = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPos.xyz;
+            gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+    `,
+
+    fragmentShader: `
+        precision highp float;
+        
+        uniform sampler2D uTexture;
+        uniform vec2 uRepeat;
+        uniform vec2 uOffset;
+        uniform vec3 uPlayerPosition;
+        uniform float uTime;
+        uniform float uWiggle;
+        uniform float uMotionSpeed;
+
+        varying vec2 vUv;
+        varying vec3 vWorldPosition;
+
+        void main() {
+            float angle = atan(vWorldPosition.z - uPlayerPosition.z, vWorldPosition.x - uPlayerPosition.x);
+
+            float wave1 = sin(angle * 8.0 - uTime * (1.5 + uMotionSpeed * 3.0));
+            float wave2 = sin(angle * 4.0 + uTime * 1.0);
+            
+            float wave = (wave1 + wave2) * 0.045 * uWiggle;
+
+            vec2 warpedUv = vUv;
+            warpedUv.y += wave;
+
+            vec2 finalUv = warpedUv * uRepeat + uOffset;
+            
+            vec4 color = texture2D(uTexture, finalUv);
+
+            // Убрали дистанционное затухание. Текст вдалеке теперь не пропадает.
+            // Оставили только легкое растворение в самом верху и низу стены, чтобы края коробки не бросались в глаза.
+            float fadeHeight = 1.0 - smoothstep(42.0, 50.0, abs(vWorldPosition.y - 25.0));
+
+            // Делаем цвет ярким и сочным
+            gl_FragColor = vec4(color.rgb * fadeHeight, color.a * fadeHeight);
+        }
+    `,
+    side: THREE.BackSide,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+});
+
+const emptyMat = new THREE.MeshBasicMaterial({
+    color: 0x000000,
+    side: THREE.BackSide,
+    depthWrite: false
+});
+
+const materials = [
+    wallsMat,  
+    wallsMat,  
+    emptyMat,  
+    emptyMat,  
+    wallsMat,  
+    wallsMat   
+];
+
+const roomBox = new THREE.Mesh(roomGeo, materials);
+roomBox.position.y = 25; 
+scene.add(roomBox);
+
+// ============================================================
+// GRID SETTINGS & GEOMETRY
+// ============================================================
+const GRID_SIZE = 600;
+const CELL_SIZE = 2.2;
+
+const geometry = new THREE.PlaneGeometry(GRID_SIZE, GRID_SIZE, 1, 1);
+geometry.rotateX(-Math.PI / 2);
+
+// ============================================================
+// GRID MATERIAL
+// ============================================================
+const material = new THREE.ShaderMaterial({
+    uniforms: {
+        uCell: { value: CELL_SIZE },
+        uLineWidth: { value: 0.018 },
+        uWiggle: { value: 0 },
+        uMotionSpeed: { value: 0 },
+        uMoveX: { value: 0 },
+        uMoveZ: { value: 0 },
+        uTime: { value: 0 },
+        uWiggleAmount: { value: 8.0 },
+        uOpacity: { value: 0.36 },
+        uPlayerPosition: { value: new THREE.Vector2(0, 0) }
+    },
+
+    vertexShader: `
+        varying vec3 vWorldPosition;
+
+        void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+    `,
+
+    fragmentShader: `
+        precision highp float;
+
+        uniform float uCell;
+        uniform float uLineWidth;
+        uniform float uWiggle;
+        uniform float uMotionSpeed;
+        uniform float uMoveX;
+        uniform float uMoveZ;
+        uniform float uTime;
+        uniform float uWiggleAmount;
+        uniform float uOpacity;
+        uniform vec2 uPlayerPosition;
+
+        varying vec3 vWorldPosition;
+
+        vec2 warpGrid(vec2 worldPos, vec2 playerRelative) {
+            float x = worldPos.x;
+            float z = worldPos.y;
+            float distanceFromPlayer = length(playerRelative);
+
+            float distanceFade = smoothstep(2.0, 45.0, distanceFromPlayer);
+            vec2 moveDirection = vec2(uMoveX, uMoveZ);
+            float moveLength = length(moveDirection);
+
+            if (moveLength > 0.001) moveDirection /= moveLength;
+
+            float forwardInfluence = abs(moveDirection.y);
+            float sideInfluence = abs(moveDirection.x);
+
+            float wave1 = sin(z * 0.045 - uTime * (1.4 + uMotionSpeed * 4.0));
+            float wave2 = sin(z * 0.095 + x * 0.030 - uTime * (1.0 + uMotionSpeed * 3.0));
+            float wave3 = sin(x * 0.075 + z * 0.025 + uTime * 1.7);
+            float wave4 = sin(z * 0.018 - x * 0.030 + uTime * 0.65);
+
+            float wave = wave1 * (0.52 + forwardInfluence * 0.20) +
+                         wave2 * 0.24 +
+                         wave3 * (0.12 + sideInfluence * 0.35) +
+                         wave4 * 0.12;
+
+            float directionalWave = sin(z * 0.055 + moveDirection.x * x * 0.075 - uTime * 1.5);
+            wave += directionalWave * moveLength * 1.5;
+
+            float bend = wave * uWiggleAmount * uWiggle * distanceFade;
+            float warpedX = x - bend;
+
+            float horizontalWave1 = sin(x * 0.065 + z * 0.038 - uTime * (1.2 + uMotionSpeed * 2.5));
+            float horizontalWave2 = sin(x * 0.028 - z * 0.022 + uTime * 0.8);
+            
+            float horizontalBend = (horizontalWave1 * 0.78 + horizontalWave2 * 0.22) *
+                                   (2.4 + sideInfluence * 1.5) * uWiggle * distanceFade;
+
+            float warpedZ = z - horizontalBend;
+
+            return vec2(warpedX, warpedZ);
+        }
+
+        float gridLine(float coordinate, float cell, float width) {
+            float distanceToLine = abs(fract(coordinate / cell + 0.5) - 0.5) * cell;
+            return 1.0 - smoothstep(width, width + 0.035, distanceToLine);
+        }
+
+        void main() {
+            vec2 worldPos = vWorldPosition.xz;
+            vec2 playerRelative = worldPos - uPlayerPosition;
+            vec2 warped = warpGrid(worldPos, playerRelative);
+
+            float vertical = gridLine(warped.x, uCell, uLineWidth);
+            float horizontal = gridLine(warped.y, uCell, uLineWidth);
+            float grid = max(vertical, horizontal);
+
+            float distance = length(playerRelative);
+
+            float distanceFade = 1.0 - smoothstep(90.0, 250.0, distance);
+            float depthFade = 1.0 - smoothstep(120.0, 255.0, abs(playerRelative.y));
+            float finalFade = distanceFade * depthFade;
+
+            float intensity = grid * finalFade * uOpacity;
+
+            gl_FragColor = vec4(vec3(intensity), 1.0);
+        }
+    `,
+    side: THREE.DoubleSide
+});
+
+const grid = new THREE.Mesh(geometry, material);
+scene.add(grid);
+
+// ============================================================
+// KEYBOARD & MOUSE
+// ============================================================
+const keys = Object.create(null);
+
+window.addEventListener("keydown", event => { keys[event.code] = true; });
+window.addEventListener("keyup", event => { keys[event.code] = false; });
+
+let yaw = 0;
+let pitch = 0;
+const mouseSensitivity = 0.0022;
+const hint = document.getElementById("hint");
+
+renderer.domElement.addEventListener("click", () => {
+    renderer.domElement.requestPointerLock();
+});
+
+document.addEventListener("pointerlockchange", () => {
+    const locked = document.pointerLockElement === renderer.domElement;
+    hint.style.opacity = locked ? "0" : "1";
+});
+
+document.addEventListener("mousemove", event => {
+    if (phoneMode || phoneControlActive) return;
+    if (document.pointerLockElement !== renderer.domElement) return;
+
+    yaw -= event.movementX * mouseSensitivity;
+    pitch -= event.movementY * mouseSensitivity;
+
+    const maxPitch = THREE.MathUtils.degToRad(89);
+    pitch = THREE.MathUtils.clamp(pitch, -maxPitch, maxPitch);
+
+    camera.rotation.y = yaw;
+    camera.rotation.x = pitch;
+});
+
+// ============================================================
+// MOVEMENT VARIABLES
+// ============================================================
+const movement = new THREE.Vector3();
+const forward = new THREE.Vector3();
+const right = new THREE.Vector3();
+const clock = new THREE.Clock();
+
+let wiggleStrength = 0;
+let smoothSpeed = 0;
+let smoothMoveX = 0;
+let smoothMoveZ = 0;
+
+let wallScrollDir = 0;
+let wallScrollOffset = 0;
+
+// Phone head-tracking state. The phone sends a quaternion; the PC stores a
+// neutral quaternion and applies only the relative rotation to the camera.
+let phoneConnected = false;
+let phoneControlActive = false;
+let phoneBaseQuaternion = null;
+let phoneCurrentQuaternion = null;
+const phoneGain = 1.0;
+
+function shortestAngleDelta(a, b) {
+    let d = a - b;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    return d;
+}
+
+function setupPhoneSocket() {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(`${protocol}//${location.host}`);
+
+    socket.addEventListener("open", () => {
+        socket.send(JSON.stringify({ type: "hello", role: phoneMode ? "phone" : "screen" }));
+        if (phoneMode) {
+            document.getElementById("phoneStatus").textContent = "Сервер подключён. Нажмите «Подключить датчики».";
+        }
+    });
+
+    socket.addEventListener("close", () => {
+        if (phoneMode) document.getElementById("phoneStatus").textContent = "Соединение с компьютером потеряно.";
+    });
+
+    socket.addEventListener("error", () => {
+        if (phoneMode) document.getElementById("phoneStatus").textContent = "Не удалось подключиться к компьютеру.";
+    });
+
+    socket.addEventListener("message", event => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+
+        if (!phoneMode && data.type === "phoneStatus") {
+            phoneConnected = data.connected;
+            desktopPhoneStatus.textContent = data.connected ? "Телефон: подключён" : "Телефон: не подключён";
+            if (!data.connected) phoneControlActive = false;
+        }
+
+        if (!phoneMode && data.type === "calibrate" && Array.isArray(data.q)) {
+            phoneBaseQuaternion = new THREE.Quaternion(data.q[0], data.q[1], data.q[2], data.q[3]);
+            phoneControlActive = true;
+            desktopPhoneStatus.textContent = "Телефон: управление активно";
+        }
+
+        if (!phoneMode && data.type === "orientation" && Array.isArray(data.q)) {
+            phoneCurrentQuaternion = new THREE.Quaternion(data.q[0], data.q[1], data.q[2], data.q[3]);
+            if (phoneBaseQuaternion) {
+                phoneControlActive = true;
+                const deltaQ = phoneBaseQuaternion.clone().invert().multiply(phoneCurrentQuaternion);
+                const euler = new THREE.Euler().setFromQuaternion(deltaQ, "YXZ");
+                yaw = euler.y * phoneGain;
+                pitch = THREE.MathUtils.clamp(euler.x * phoneGain, -THREE.MathUtils.degToRad(89), THREE.MathUtils.degToRad(89));
+                camera.rotation.y = yaw;
+                camera.rotation.x = pitch;
+            }
+        }
+    });
+
+    return socket;
+}
+
+const phoneSocket = setupPhoneSocket();
+
+async function enablePhoneSensors() {
+    if (!phoneMode) return;
+    const status = document.getElementById("phoneStatus");
+    const calibrate = document.getElementById("calibratePhone");
+
+    if (!window.isSecureContext) {
+        status.textContent = "Нужен HTTPS. Откройте адрес https://… на телефоне.";
+        return;
+    }
+
+    try {
+        if (typeof DeviceOrientationEvent === "undefined") throw new Error("orientation-unavailable");
+        if (typeof DeviceOrientationEvent.requestPermission === "function") {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission !== "granted") throw new Error("permission-denied");
+        }
+        window.addEventListener("deviceorientation", handlePhoneOrientation, true);
+        calibrate.disabled = false;
+        status.textContent = "Датчики разрешены. Поставьте телефон в нейтральное положение и нажмите «Калибровать».";
+    } catch (error) {
+        status.textContent = error.message === "permission-denied"
+            ? "Доступ к датчикам запрещён. Разрешите Motion & Orientation в браузере."
+            : "Не удалось получить доступ к гироскопу/ориентации.";
+    }
+}
+
+function handlePhoneOrientation(event) {
+    if (!phoneMode || event.alpha == null || event.beta == null || event.gamma == null) return;
+
+    const alpha = THREE.MathUtils.degToRad(event.alpha);
+    const beta = THREE.MathUtils.degToRad(event.beta);
+    const gamma = THREE.MathUtils.degToRad(event.gamma);
+    const orient = THREE.MathUtils.degToRad(screen.orientation?.angle || 0);
+
+    // Same coordinate conversion used by common WebXR/device-orientation controls:
+    // device Euler -> camera quaternion, then compensate for screen rotation.
+    const euler = new THREE.Euler(beta, alpha, -gamma, "YXZ");
+    const q = new THREE.Quaternion().setFromEuler(euler);
+    q.multiply(new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5)));
+    q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -orient));
+
+    document.getElementById("phoneDebug").textContent =
+        `alpha ${event.alpha.toFixed(1)} · beta ${event.beta.toFixed(1)} · gamma ${event.gamma.toFixed(1)}`;
+
+    phoneCurrentQuaternion = q.clone();
+    if (phoneSocket.readyState === WebSocket.OPEN) {
+        phoneSocket.send(JSON.stringify({ type: "orientation", q: [q.x, q.y, q.z, q.w] }));
+    }
+}
+
+if (phoneMode) {
+    document.getElementById("enableSensors").addEventListener("click", enablePhoneSensors);
+    document.getElementById("calibratePhone").addEventListener("click", () => {
+        if (!phoneCurrentQuaternion) {
+            // The first orientation event is already enough for calibration.
+            document.getElementById("phoneStatus").textContent = "Пока нет данных от датчика. Немного подвигайте телефон и попробуйте ещё раз.";
+            return;
+        }
+        phoneBaseQuaternion = phoneCurrentQuaternion.clone();
+        document.getElementById("phoneStatus").textContent = "Калибровка готова. Двигайте телефоном как головой.";
+        if (phoneSocket.readyState === WebSocket.OPEN) {
+            phoneSocket.send(JSON.stringify({ type: "calibrate", q: [phoneCurrentQuaternion.x, phoneCurrentQuaternion.y, phoneCurrentQuaternion.z, phoneCurrentQuaternion.w] }));
+        }
+    });
+}
+
+
+// ============================================================
+// UPDATE LOOP
+// ============================================================
+function update() {
+    const delta = Math.min(clock.getDelta(), 0.05);
+    const time = clock.elapsedTime;
+
+    movement.set(0, 0, 0);
+    let localZ = 0;
+
+    if (keys["KeyW"]) {
+        movement.z -= 1;
+        localZ -= 1; 
+    }
+    if (keys["KeyS"]) {
+        movement.z += 1;
+        localZ += 1; 
+    }
+    if (keys["KeyA"]) movement.x -= 1;
+    if (keys["KeyD"]) movement.x += 1;
+
+    const isMoving = movement.lengthSq() > 0;
+    if (isMoving) movement.normalize();
+
+    if (isMoving) {
+        forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+        right.set(Math.cos(yaw), 0, -Math.sin(yaw));
+
+        const speed = 10;
+        camera.position.addScaledVector(forward, -movement.z * speed * delta);
+        camera.position.addScaledVector(right, movement.x * speed * delta);
+    }
+
+    const targetMotion = isMoving ? 1 : 0;
+
+    smoothSpeed = THREE.MathUtils.damp(smoothSpeed, targetMotion, 5.0, delta);
+    smoothMoveX = THREE.MathUtils.damp(smoothMoveX, isMoving ? movement.x : 0, 5.0, delta);
+    smoothMoveZ = THREE.MathUtils.damp(smoothMoveZ, isMoving ? movement.z : 0, 5.0, delta);
+    wiggleStrength = THREE.MathUtils.damp(wiggleStrength, targetMotion, 2.4, delta);
+    
+    wallScrollDir = THREE.MathUtils.damp(wallScrollDir, localZ, 4.0, delta);
+
+    material.uniforms.uWiggle.value = wiggleStrength;
+    material.uniforms.uMotionSpeed.value = smoothSpeed;
+    material.uniforms.uMoveX.value = smoothMoveX;
+    material.uniforms.uMoveZ.value = smoothMoveZ;
+    material.uniforms.uTime.value = time;
+    material.uniforms.uPlayerPosition.value.set(camera.position.x, camera.position.z);
+
+    const localX = camera.position.x - grid.position.x;
+    const localZ_grid = camera.position.z - grid.position.z;
+    const margin = 100;
+
+    if (Math.abs(localX) > GRID_SIZE / 2 - margin) {
+        grid.position.x = Math.floor(camera.position.x / CELL_SIZE) * CELL_SIZE;
+    }
+    if (Math.abs(localZ_grid) > GRID_SIZE / 2 - margin) {
+        grid.position.z = Math.floor(camera.position.z / CELL_SIZE) * CELL_SIZE;
+    }
+
+    // ========================================================
+    // ОБНОВЛЕНИЕ ШЕЙДЕРОВ СТЕН
+    // ========================================================
+    roomBox.position.x = camera.position.x;
+    roomBox.position.z = camera.position.z;
+    
+    wallsMat.uniforms.uTime.value = time;
+    wallsMat.uniforms.uWiggle.value = wiggleStrength;
+    wallsMat.uniforms.uMotionSpeed.value = smoothSpeed;
+    wallsMat.uniforms.uPlayerPosition.value.set(camera.position.x, camera.position.y, camera.position.z);
+    
+    wallScrollOffset += wallScrollDir * smoothSpeed * delta * 1.5;
+    
+    if (wallScrollOffset > 1.0) wallScrollOffset -= 1.0;
+    if (wallScrollOffset < 0.0) wallScrollOffset += 1.0;
+    
+    wallsMat.uniforms.uOffset.value.x = wallScrollOffset; 
+}
+
+// ============================================================
+// RENDER LOOP
+// ============================================================
+function animate() {
+    requestAnimationFrame(animate);
+    if (!phoneMode) {
+        update();
+        renderer.render(scene, camera);
+    }
+}
+
+animate();
+
+window.addEventListener("resize", () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
